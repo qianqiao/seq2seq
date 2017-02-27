@@ -124,6 +124,8 @@ class Seq2SeqModel(object):
             # generating the response
             self.generation_index = tf.argmax(self.decoder_distribution, 2)
             self.generation = tf.nn.embedding_lookup(self.symbols, self.generation_index) 
+            
+            self.params = tf.trainable_variables()
         
         self.saver = tf.train.Saver(tf.global_variables(), write_version=tf.train.SaverDef.V2, 
                 max_to_keep=3, pad_step_number=True, keep_checkpoint_every_n_hours=1.0)
