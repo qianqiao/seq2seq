@@ -117,7 +117,6 @@ def inference(model, sess, posts):
     def padding(sent, l):
         return sent + ['_EOS'] + ['_PAD'] * (l-len(sent)-1)
     batched_posts = [padding(p, max(length)) for p in posts]
-    print(length)
     batched_data = {'posts': np.array(batched_posts), 
             'posts_length': np.array(length, dtype=np.int32)}
     responses = model.inference(sess, batched_data)[0]
