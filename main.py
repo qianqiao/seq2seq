@@ -159,7 +159,7 @@ with tf.Session(config=config) as sess:
             tf.global_variables_initializer().run()
             model.symbol2index.init.run()
         
-        loss_step, time_step = np.zeros((1, )), 1e18
+        loss_step, time_step = np.zeros((1e18, )), 0
         previous_losses = [1e18]*3
         while True:
             if model.global_step.eval() % FLAGS.per_checkpoint == 0:
@@ -187,7 +187,12 @@ with tf.Session(config=config) as sess:
                 FLAGS.layers, 
                 is_train=False,
                 vocab=None)
-        model.saver.restore(sess, tf.train.latest_checkpoint(FLAGS.train_dir))
+        if FLAGS.inference_version == 0:
+            model_path = tf.train.latest_checkpoint(FLAGS.train_dir)
+        else:
+            model_path = '%s/checkpoint-%08d' % (FLAGS.train_dir, FLAGS.inference_version)
+        print('restore from %s' % model_path)
+        model.saver.restore(sess, model_path)
         model.symbol2index.init.run()
 
         def split(sent):
