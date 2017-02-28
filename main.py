@@ -113,12 +113,13 @@ def evaluate(model, sess, data_dev):
     print('    perplexity on dev set: %.2f' % np.exp(loss))
 
 def inference(model, sess, posts):
-    length = [len(p) for p in posts]
+    length = [len(p)+1 for p in posts]
     def padding(sent, l):
         return sent + ['_EOS'] + ['_PAD'] * (l-len(sent)-1)
-    batched_posts = [padding(p, max(length)+1) for p in posts]
+    batched_posts = [padding(p, max(length)) for p in posts]
+    print(length)
     batched_data = {'posts': np.array(batched_posts), 
-            'posts_length': np.array(max(length)+1, dtype=np.int32)}
+            'posts_length': np.array(length, dtype=np.int32)}
     responses = model.inference(sess, batched_data)[0]
     results = []
     for response in responses:

@@ -122,7 +122,9 @@ class Seq2SeqModel(object):
                     scope="decoder")
             
             # generating the response
-            self.generation_index = tf.argmax(self.decoder_distribution, 2)
+            #self.generation_index = tf.argmax(self.decoder_distribution, 2)
+            self.generation_index = tf.argmax(tf.split(self.decoder_distribution, 
+                [2, num_symbols-2], 2)[1], 2) + 2 # for removing UNK
             self.generation = tf.nn.embedding_lookup(self.symbols, self.generation_index) 
             
             self.params = tf.trainable_variables()
