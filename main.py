@@ -31,9 +31,11 @@ def load_data(path, fname):
         post = [line.strip().split() for line in f.readlines()]
     with open('%s/%s.response' % (path, fname)) as f:
         response = [line.strip().split() for line in f.readlines()]
+    with open('%s/%s.keys' % (path, fname)) as f:
+        key = [map(int, line.strip().split()) for line in f.readlines()]
     data = []
-    for p, r in zip(post, response):
-        data.append({'post': p, 'response': r})
+    for p, r, k in zip(post, response, key):
+        data.append({'post': p, 'response': r, 'key': k})
     return data
 
 def build_vocab(path, data):
@@ -89,14 +91,14 @@ def gen_batched_data(data):
 
     batched_data = {'posts': np.array(posts),
             'responses': np.array(responses),
-            'posts_length': posts_length, 
-            'responses_length': responses_length}
+            'posts_length': np.array(posts_length, dtype=np.int32), 
+            'responses_length': np.array(responses_length, dtype=np.int32)}
     return batched_data
 
 def train(model, sess, data_train):
     selected_data = [random.choice(data_train) for i in range(FLAGS.batch_size)]
     batched_data = gen_batched_data(selected_data)
-    outputs = model.step_decoder(sess, batched_data)
+    outputs = model.step(sess, 'decoder', batched_data)
     return outputs[0]
 
 def evaluate(model, sess, data_dev):
@@ -105,12 +107,92 @@ def evaluate(model, sess, data_dev):
     while st < len(data_dev):
         selected_data = data_dev[st:ed]
         batched_data = gen_batched_data(selected_data)
-        outputs = model.step_decoder(sess, batched_data, forward_only=True)
+        outputs = model.step(sess, 'decoder', batched_data, forward_only=True)
         loss += outputs[0]
         st, ed = ed, ed+FLAGS.batch_size
         times += 1
     loss /= times
     print('    perplexity on dev set: %.2f' % np.exp(loss))
+
+def gen_batched_data_for_matcher(posts_a, posts_b, label=None):
+    def padding(sent, l):
+        return sent + ['_EOS'] + ['_PAD'] * (l-len(sent)-1)
+
+    length_a = [len(p['post'])+1 for p in posts_a]
+    length_b = [len(p['post'])+1 for p in posts_b]
+    posts_length = np.array([length_a, length_b], dtype=np.int32)
+
+    l = max(length_a+length_b)
+    posts_pad_a = [padding(p['post'], l) for p in posts_a]
+    posts_pad_b = [padding(p['post'], l) for p in posts_b]
+    posts = np.array([posts_pad_a, posts_pad_b])
+
+    batched_data = {'posts': posts, 'posts_length': posts_length}
+    if label != None:
+        batched_data['solution'] = np.array(label, dtype=np.int32)
+    return batched_data
+
+def random_choice(candidates, forb=None):
+    while True:
+        item = random.choice(candidates)
+        if candidates != forb:
+            return item
+
+def build_matcher_data(data):
+    cache = {}
+    for item in data:
+        key = item['key'][0]
+        if key in cache:
+            cache[key].append(item)
+        else:
+            cache[key] = [item]
+    return cache
+
+def train_matcher(model, sess, data):
+    posts_a, posts_b, label = [], [], []
+    for i in range(FLAGS.batch_size):
+        if random.random() < 0.5:
+            key = random_choice(data.keys())
+            pair_a = random_choice(data[key])
+            pair_b = random_choice(data[key], pair_a)
+            l = 1
+        else:
+            key_a = random_choice(data.keys())
+            key_b = random_choice(data.keys())
+            pair_a = random_choice(data[key_a])
+            pair_b = random_choice(data[key_b])
+            l = 0
+        posts_a.append(pair_a)
+        posts_b.append(pair_b)
+        label.append(l)
+    batched_data = gen_batched_data_for_matcher(posts_a, posts_b, label)
+    outputs = model.step(sess, 'matcher', batched_data)
+    return outputs[0]
+
+def evaluate_matcher(model, sess, data, iters=500, negation=4):
+    posts_a = []
+    posts_b = []
+    for i in range(iters):
+        key_a = random_choice(data.keys())
+        pair_a = random_choice(data[key_a])
+        pair_b = random_choice(data[key_a], pair_a)
+        posts_a.append(pair_a)
+        posts_b.append(pair_b)
+        for j in range(negation):
+            key_b = random_choice(data.keys())
+            pair_b = random_choice(data[key_b])
+            posts_a.append(pair_a)
+            posts_b.append(pair_b)
+
+    batched_data = gen_batched_data_for_matcher(posts_a, posts_b)
+    outputs = model.match(sess, batched_data)
+    result = outputs[0]
+    acc = 0.0
+    for i in range(iters):
+        now = result[(negation+1)*i:(negation+1)*(i+1)]
+        if now[0] == max(now):
+            acc += 1
+    print('acc=%.2f%%' % (100*acc/iters))
 
 def inference(model, sess, posts):
     length = [len(p)+1 for p in posts]
@@ -137,7 +219,9 @@ with tf.Session(config=config) as sess:
     if FLAGS.is_train:
         data_train = load_data(FLAGS.data_dir, 'weibo_pair_train')
         data_dev = load_data(FLAGS.data_dir, 'weibo_pair_dev')
-        vocab, embed = build_vocab(FLAGS.data_dir, data_train)
+        manual_train = load_data(FLAGS.data_dir, 'manual_train')
+        manual_dev = load_data(FLAGS.data_dir, 'manual_dev')
+        vocab, embed = build_vocab(FLAGS.data_dir, data_train + manual_train*10)
         
         model = Seq2SeqModel(
                 FLAGS.symbols, 
@@ -161,6 +245,8 @@ with tf.Session(config=config) as sess:
         
         loss_step, time_step = np.zeros((1, )), 1e18
         previous_losses = [1e18]*3
+        manual_dev_data = build_matcher_data(manual_dev)
+        manual_train_data = build_matcher_data(manual_train)
         while True:
             if model.global_step.eval() % FLAGS.per_checkpoint == 0:
                 show = lambda a: '[%s]' % (' '.join(['%.2f' % x for x in a]))
@@ -169,14 +255,16 @@ with tf.Session(config=config) as sess:
                             time_step, show(np.exp(loss_step))))
                 model.saver.save(sess, '%s/checkpoint' % FLAGS.train_dir, 
                         global_step=model.global_step)
-                evaluate(model, sess, data_dev)
+                #evaluate(model, sess, data_dev)
+                evaluate_matcher(model, sess, manual_dev_data)
                 if np.sum(loss_step) > max(previous_losses):
                     sess.run(model.learning_rate_decay_op)
                 previous_losses = previous_losses[1:]+[np.sum(loss_step)]
                 loss_step, time_step = np.zeros((1, )), .0
 
             start_time = time.time()
-            loss_step += train(model, sess, data_train) / FLAGS.per_checkpoint
+            #loss_step += train(model, sess, data_train) / FLAGS.per_checkpoint
+            loss_step += train_matcher(model, sess, manual_train_data) / FLAGS.per_checkpoint
             time_step += (time.time() - start_time) / FLAGS.per_checkpoint
             
     else:
@@ -187,6 +275,7 @@ with tf.Session(config=config) as sess:
                 FLAGS.layers, 
                 is_train=False,
                 vocab=None)
+        
         model.saver.restore(sess, tf.train.latest_checkpoint(FLAGS.train_dir))
         model.symbol2index.init.run()
 
@@ -223,5 +312,4 @@ with tf.Session(config=config) as sess:
             with open(FLAGS.inference_path+'.out', 'w') as f:
                 for p, r in zip(posts, responses):
                     f.writelines('%s\t%s\n' % (''.join(p), ''.join(r)))
-
 
