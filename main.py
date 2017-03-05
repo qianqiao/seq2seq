@@ -138,14 +138,15 @@ def random_choice(candidates, forb=None):
         if candidates != forb:
             return item
 
-def build_matcher_data(data):
+def build_matcher_data(data, f):
     cache = {}
     for item in data:
         key = item['key'][0]
-        if key in cache:
-            cache[key].append(item)
-        else:
-            cache[key] = [item]
+        if f(key):
+            if key in cache:
+                cache[key].append(item)
+            else:
+                cache[key] = [item]
     return cache
 
 def train_matcher(model, sess, data):
@@ -169,17 +170,23 @@ def train_matcher(model, sess, data):
     outputs = model.step(sess, 'matcher', batched_data)
     return outputs[0]
 
-def evaluate_matcher(model, sess, data, iters=500, negation=4):
+def evaluate_matcher(model, sess, data, iters=500, negation=99):
     posts_a = []
     posts_b = []
     for i in range(iters):
         key_a = random_choice(data.keys())
         pair_a = random_choice(data[key_a])
-        pair_b = random_choice(data[key_a], pair_a)
-        posts_a.append(pair_a)
-        posts_b.append(pair_b)
+        if i % 2 == 0:
+            pair_b = random_choice(data[key_a], pair_a)
+            posts_a.append(pair_a)
+            posts_b.append(pair_b)
+        else:
+            key_b = random_choice(data.keys(), key_a)
+            pair_b = random_choice(data[key_b])
+            posts_a.append(pair_a)
+            posts_b.append(pair_b)
         for j in range(negation):
-            key_b = random_choice(data.keys())
+            key_b = random_choice(data.keys(), key_a)
             pair_b = random_choice(data[key_b])
             posts_a.append(pair_a)
             posts_b.append(pair_b)
@@ -187,12 +194,18 @@ def evaluate_matcher(model, sess, data, iters=500, negation=4):
     batched_data = gen_batched_data_for_matcher(posts_a, posts_b)
     outputs = model.match(sess, batched_data)
     result = outputs[0]
-    acc = 0.0
-    for i in range(iters):
-        now = result[(negation+1)*i:(negation+1)*(i+1)]
-        if now[0] == max(now):
-            acc += 1
-    print('acc=%.2f%%' % (100*acc/iters))
+    for a in [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]:
+        acc1, acc2 = 0.0, 0.0
+        for i in range(iters):
+            now = result[(negation+1)*i:(negation+1)*(i+1)]
+            if i % 2 == 0:
+                if (now[0] == max(now)) & (max(now) > a):
+                    acc1 += 1
+            else:
+                if (max(now) <= a):
+                    acc2 += 1
+        print('a=%.1f, acc=%.2f%%, %.2f%%, %.2f%%' \
+                % (a, 100*acc1/iters, 100*acc2/iters, 100*(acc1+acc2)/iters))
 
 def inference(model, sess, posts):
     length = [len(p)+1 for p in posts]
@@ -245,8 +258,11 @@ with tf.Session(config=config) as sess:
         
         loss_step, time_step = np.zeros((1, )), 1e18
         previous_losses = [1e18]*3
-        manual_dev_data = build_matcher_data(manual_dev)
-        manual_train_data = build_matcher_data(manual_train)
+        #manual_dev_data = build_matcher_data(manual_dev, lambda x: int(x) >= 400)
+        #manual_train_data = build_matcher_data(manual_train, lambda x: int(x) < 400)
+        manual_dev_data = build_matcher_data(manual_dev, lambda x: True)
+        manual_train_data = build_matcher_data(manual_train, lambda x: True)
+        print(len(manual_dev_data), len(manual_train_data))
         while True:
             if model.global_step.eval() % FLAGS.per_checkpoint == 0:
                 show = lambda a: '[%s]' % (' '.join(['%.2f' % x for x in a]))
