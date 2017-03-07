@@ -159,7 +159,7 @@ with tf.Session(config=config) as sess:
             tf.global_variables_initializer().run()
             model.symbol2index.init.run()
         
-        loss_step, time_step = np.zeros((1e18, )), 0
+        loss_step, time_step = np.zeros((1, )), .0
         previous_losses = [1e18]*3
         while True:
             if model.global_step.eval() % FLAGS.per_checkpoint == 0:
@@ -227,6 +227,7 @@ with tf.Session(config=config) as sess:
 
             with open(FLAGS.inference_path+'.out', 'w') as f:
                 for p, r in zip(posts, responses):
-                    f.writelines('%s\t%s\n' % (''.join(p), ''.join(r)))
+                    #f.writelines('%s\t%s\n' % (''.join(p), ''.join(r)))
+                    f.writelines('%s\n' % (''.join(r)))
 
 
