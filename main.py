@@ -63,7 +63,7 @@ def build_vocab(path, data):
             word = s[:s.find(' ')]
             vector = s[s.find(' ')+1:]
             vectors[word] = vector
-    
+
     embed = []
     for word in vocab_list:
         if word in vectors:
@@ -72,17 +72,17 @@ def build_vocab(path, data):
             vector = np.zeros((FLAGS.embed_units), dtype=np.float32)
         embed.append(vector)
     embed = np.array(embed, dtype=np.float32)
-            
+
     return vocab_list, embed
 
 def gen_batched_data(data):
     encoder_len = max([len(item['post']) for item in data])+1
     decoder_len = max([len(item['response']) for item in data])+1
-    
+
     posts, responses, posts_length, responses_length = [], [], [], []
     def padding(sent, l):
         return sent + ['_EOS'] + ['_PAD'] * (l-len(sent)-1)
-        
+
     for item in data:
         posts.append(padding(item['post'], encoder_len))
         responses.append(padding(item['response'], decoder_len))
@@ -91,7 +91,7 @@ def gen_batched_data(data):
 
     batched_data = {'posts': np.array(posts),
             'responses': np.array(responses),
-            'posts_length': np.array(posts_length, dtype=np.int32), 
+            'posts_length': np.array(posts_length, dtype=np.int32),
             'responses_length': np.array(responses_length, dtype=np.int32)}
     return batched_data
 
@@ -212,7 +212,7 @@ def inference(model, sess, posts):
     def padding(sent, l):
         return sent + ['_EOS'] + ['_PAD'] * (l-len(sent)-1)
     batched_posts = [padding(p, max(length)) for p in posts]
-    batched_data = {'posts': np.array(batched_posts), 
+    batched_data = {'posts': np.array(batched_posts),
             'posts_length': np.array(length, dtype=np.int32)}
     responses = model.inference(sess, batched_data)[0]
     results = []
@@ -235,18 +235,18 @@ with tf.Session(config=config) as sess:
         manual_train = load_data(FLAGS.data_dir, 'manual_train')
         manual_dev = load_data(FLAGS.data_dir, 'manual_dev')
         vocab, embed = build_vocab(FLAGS.data_dir, data_train + manual_train*10)
-        
+
         model = Seq2SeqModel(
-                FLAGS.symbols, 
+                FLAGS.symbols,
                 FLAGS.embed_units,
-                FLAGS.units, 
+                FLAGS.units,
                 FLAGS.layers,
                 is_train=True,
                 vocab=vocab,
                 embed=embed)
         if FLAGS.log_parameters:
             model.print_parameters()
-        
+
         if tf.train.get_checkpoint_state(FLAGS.train_dir):
             print("Reading model parameters from %s" % FLAGS.train_dir)
             model.saver.restore(sess, tf.train.latest_checkpoint(FLAGS.train_dir))
@@ -255,7 +255,7 @@ with tf.Session(config=config) as sess:
             print("Created model with fresh parameters.")
             tf.global_variables_initializer().run()
             model.symbol2index.init.run()
-        
+
         loss_step, time_step = np.zeros((1, )), 1e18
         previous_losses = [1e18]*3
         #manual_dev_data = build_matcher_data(manual_dev, lambda x: int(x) >= 400)
@@ -267,9 +267,9 @@ with tf.Session(config=config) as sess:
             if model.global_step.eval() % FLAGS.per_checkpoint == 0:
                 show = lambda a: '[%s]' % (' '.join(['%.2f' % x for x in a]))
                 print("global step %d learning rate %.4f step-time %.2f perplexity %s"
-                        % (model.global_step.eval(), model.learning_rate.eval(), 
+                        % (model.global_step.eval(), model.learning_rate.eval(),
                             time_step, show(np.exp(loss_step))))
-                model.saver.save(sess, '%s/checkpoint' % FLAGS.train_dir, 
+                model.saver.save(sess, '%s/checkpoint' % FLAGS.train_dir,
                         global_step=model.global_step)
                 #evaluate(model, sess, data_dev)
                 evaluate_matcher(model, sess, manual_dev_data)
@@ -282,16 +282,16 @@ with tf.Session(config=config) as sess:
             #loss_step += train(model, sess, data_train) / FLAGS.per_checkpoint
             loss_step += train_matcher(model, sess, manual_train_data) / FLAGS.per_checkpoint
             time_step += (time.time() - start_time) / FLAGS.per_checkpoint
-            
+
     else:
         model = Seq2SeqModel(
-                FLAGS.symbols, 
-                FLAGS.embed_units, 
-                FLAGS.units, 
-                FLAGS.layers, 
+                FLAGS.symbols,
+                FLAGS.embed_units,
+                FLAGS.units,
+                FLAGS.layers,
                 is_train=False,
                 vocab=None)
-        
+
         model.saver.restore(sess, tf.train.latest_checkpoint(FLAGS.train_dir))
         model.symbol2index.init.run()
 
@@ -300,10 +300,10 @@ with tf.Session(config=config) as sess:
                 return sent.split()
 
             sent = sent.decode('utf-8', 'ignore').encode('gbk', 'ignore')
-            tuples = [(word.decode("gbk").encode("utf-8"), pos) 
+            tuples = [(word.decode("gbk").encode("utf-8"), pos)
                     for word, pos in Global.GetTokenPos(sent)]
             return [each[0] for each in tuples]
-        
+
         if FLAGS.inference_path == '':
             while True:
                 sys.stdout.write('post: ')
