@@ -1,0 +1,1 @@
+/home/data/share/wordvector/vector.txt

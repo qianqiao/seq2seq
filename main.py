@@ -16,6 +16,7 @@ tf.app.flags.DEFINE_integer("symbols", 40000, "vocabulary size.")
 tf.app.flags.DEFINE_integer("embed_units", 100, "Size of word embedding.")
 tf.app.flags.DEFINE_integer("units", 1024, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("layers", 4, "Number of layers in the model.")
+tf.app.flags.DEFINE_integer("beam_size", 0, "Beam size to use during beam inference.")
 tf.app.flags.DEFINE_integer("batch_size", 128, "Batch size to use during training.")
 tf.app.flags.DEFINE_string("data_dir", "./data", "Data directory")
 tf.app.flags.DEFINE_string("train_dir", "./train", "Training directory.")
@@ -131,6 +132,25 @@ def inference(model, sess, posts):
         results.append(result)
     return results
 
+def beam_inference(model, sess, posts):
+    length = [len(p)+1 for p in posts]
+    def padding(sent, l):
+        return sent + ['_EOS'] + ['_PAD'] * (l-len(sent)-1)
+    batched_posts = [padding(p, max(length)) for p in posts]
+    batched_data = {'posts': np.array(batched_posts), 
+            'posts_length': np.array(length, dtype=np.int32)}
+    responses = model.beam_inference(sess, batched_data)
+    results = []
+    for response in responses:
+        result = []
+        for token in response:
+            if token != '_EOS':
+                result.append(token)
+            else:
+                break
+        results.append(result)
+    return results
+
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 with tf.Session(config=config) as sess:
@@ -185,6 +205,9 @@ with tf.Session(config=config) as sess:
                 FLAGS.embed_units, 
                 FLAGS.units, 
                 FLAGS.layers, 
+                beam_size=FLAGS.beam_size,
+                remove_unk=True,
+                beam_diverse=True,
                 is_train=False,
                 vocab=None)
         if FLAGS.inference_version == 0:
@@ -205,13 +228,23 @@ with tf.Session(config=config) as sess:
             return [each[0] for each in tuples]
         
         if FLAGS.inference_path == '':
-            while True:
-                sys.stdout.write('post: ')
-                sys.stdout.flush()
-                post = split(sys.stdin.readline())
-                response = inference(model, sess, [post])[0]
-                print('response: %s' % ''.join(response))
-                sys.stdout.flush()
+            if FLAGS.beam_size == 0:
+                while True:
+                    sys.stdout.write('post: ')
+                    sys.stdout.flush()
+                    post = split(sys.stdin.readline())
+                    response = inference(model, sess, [post])[0] 
+                    print('response: %s' % ''.join(response))
+                    sys.stdout.flush()
+            else:
+                while True:
+                    sys.stdout.write('post: ')
+                    sys.stdout.flush()
+                    post = split(sys.stdin.readline())
+                    responses = beam_inference(model, sess, [post]*FLAGS.beam_size)
+                    for response in responses:
+                        print('response: %s' % ''.join(response))
+                    sys.stdout.flush()
         else:
             posts = []
             with open(FLAGS.inference_path) as f:

@@ -9,6 +9,7 @@ from tensorflow.contrib.seq2seq.python.ops.loss import sequence_loss
 from tensorflow.contrib.lookup.lookup_ops import HashTable, KeyValueTensorInitializer
 from tensorflow.contrib.layers.python.layers import layers
 from output_projection import output_projection_layer
+from beam_inference import attention_decoder_fn_beam_inference
 
 PAD_ID = 0
 UNK_ID = 1
@@ -26,6 +27,9 @@ class Seq2SeqModel(object):
             vocab=None,
             embed=None,
             learning_rate=0.5,
+            beam_size=0,
+            remove_unk=False,
+            beam_diverse=False,
             learning_rate_decay_factor=0.95,
             max_gradient_norm=5.0,
             num_samples=512,
@@ -89,6 +93,9 @@ class Seq2SeqModel(object):
         decoder_fn_inference = attention_decoder_fn.attention_decoder_fn_inference(output_fn, 
                 encoder_state, attention_keys, attention_values, attention_score_fn, 
                 attention_construct_fn, self.embed, GO_ID, EOS_ID, max_length, num_symbols)
+        decoder_fn_beam_inference = attention_decoder_fn_beam_inference(output_fn, 
+                encoder_state, attention_keys, attention_values, attention_score_fn, 
+                attention_construct_fn, self.embed, GO_ID, EOS_ID, max_length, num_symbols, beam_size, remove_unk, beam_diverse)
         
         if is_train:
             # rnn decoder
@@ -117,16 +124,26 @@ class Seq2SeqModel(object):
                     global_step=self.global_step)
 
         else:
-            # rnn decoder
-            self.decoder_distribution, _, _ = dynamic_rnn_decoder(cell, decoder_fn_inference, 
-                    scope="decoder")
-            
-            # generating the response
-            #self.generation_index = tf.argmax(self.decoder_distribution, 2)
-            self.generation_index = tf.argmax(tf.split(self.decoder_distribution, 
-                [2, num_symbols-2], 2)[1], 2) + 2 # for removing UNK
-            self.generation = tf.nn.embedding_lookup(self.symbols, self.generation_index) 
-            
+            if beam_size > 0:
+                self.decoder_distribution, _, self.context_state = dynamic_rnn_decoder(cell, decoder_fn_beam_inference, 
+                        scope="decoder")
+                (log_beam_probs, beam_parents, beam_symbols, result_probs, result_parents, result_symbols) = self.context_state
+                self.beam_parents = beam_parents.stack()
+                self.beam_symbols = beam_symbols.stack()
+                self.result_probs = result_probs.stack()
+                self.result_symbols = result_symbols.stack()
+                self.result_parents = result_parents.stack()
+            else:
+                # rnn decoder
+                self.decoder_distribution, _, _ = dynamic_rnn_decoder(cell, decoder_fn_inference, 
+                        scope="decoder")
+                
+                # generating the response
+                #self.generation_index = tf.argmax(self.decoder_distribution, 2)
+                self.generation_index = tf.argmax(tf.split(self.decoder_distribution, 
+                    [2, num_symbols-2], 2)[1], 2) + 2 # for removing UNK
+                self.generation = tf.nn.embedding_lookup(self.symbols, self.generation_index) 
+                
             self.params = tf.trainable_variables()
         
         self.saver = tf.train.Saver(tf.global_variables(), write_version=tf.train.SaverDef.V2, 
@@ -152,3 +169,37 @@ class Seq2SeqModel(object):
         output_feed = [self.generation]
         return session.run(output_feed, input_feed)
 
+    def beam_inference(self, session, data):
+        input_feed = {self.posts: data['posts'], self.posts_length: data['posts_length']}
+        output_feed = [self.symbols, self.beam_parents, self.beam_symbols, self.result_parents, self.result_symbols, self.result_probs]
+        vocab, parent, symbol, result_parent, result_symbol, result_prob = session.run(output_feed, input_feed)
+        res = []
+        nounk = []
+        for i, (prb, smb, prt) in enumerate(zip(result_prob, result_symbol, result_parent)):
+            end = []
+            for idx, j in enumerate(smb):
+                if j == EOS_ID:
+                    end.append(idx)
+            if len(end) == 0: continue
+            for j in end:
+                p = prt[j]
+                s = -1
+                output = []
+                for step in xrange(i-1, -1, -1):
+                    s = symbol[step][p]
+                    p = parent[step][p]
+                    output.append(s)
+                output.reverse()
+                #res.append(tf.nn.embedding_lookup(self.symbols, tf.stack(output))) 
+                res.append("".join([vocab[x] for x in output]))
+        return res
+#                if data_utils.UNK_ID in output:
+#                    res.append([prb[j][0], " ".join([tf.compat.as_str(rev_response_vocab[int(x)]) for x in output])])
+#                else:
+#                    nounk.append([prb[j][0], " ".join([tf.compat.as_str(rev_response_vocab[int(x)]) for x in output])])
+#        res.sort(key=lambda x:x[0], reverse=True)
+#        nounk.sort(key=lambda x:x[0], reverse=True)
+#        if len(nounk) < beam_size:
+#            res = nounk + res[:(num_output-len(nounk))]
+#        else:
+#            res = nounk
