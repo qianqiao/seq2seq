@@ -1,2 +1,5 @@
 *.pyc
+*.swp
 wordseg_python
+train
+data

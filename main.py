@@ -207,7 +207,7 @@ with tf.Session(config=config) as sess:
                 FLAGS.layers, 
                 beam_size=FLAGS.beam_size,
                 remove_unk=True,
-                beam_diverse=True,
+                d_rate=0.0,
                 is_train=False,
                 vocab=None)
         if FLAGS.inference_version == 0:

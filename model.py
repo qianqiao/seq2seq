@@ -29,7 +29,7 @@ class Seq2SeqModel(object):
             learning_rate=0.5,
             beam_size=0,
             remove_unk=False,
-            beam_diverse=False,
+            d_rate=0.0,
             learning_rate_decay_factor=0.95,
             max_gradient_norm=5.0,
             num_samples=512,
@@ -95,7 +95,7 @@ class Seq2SeqModel(object):
                 attention_construct_fn, self.embed, GO_ID, EOS_ID, max_length, num_symbols)
         decoder_fn_beam_inference = attention_decoder_fn_beam_inference(output_fn, 
                 encoder_state, attention_keys, attention_values, attention_score_fn, 
-                attention_construct_fn, self.embed, GO_ID, EOS_ID, max_length, num_symbols, beam_size, remove_unk, beam_diverse)
+                attention_construct_fn, self.embed, GO_ID, EOS_ID, max_length, num_symbols, beam_size, remove_unk, d_rate)
         
         if is_train:
             # rnn decoder

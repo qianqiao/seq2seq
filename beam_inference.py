@@ -29,7 +29,7 @@ def attention_decoder_fn_beam_inference(output_fn,
                                        num_decoder_symbols,
                                        beam_size,
                                        remove_unk=False,
-                                       beam_diverse=False,
+                                       d_rate=0.0,
                                        dtype=dtypes.int32,
                                        name=None):
     """Attentional decoder function for `dynamic_rnn_decoder` during inference.
@@ -170,7 +170,6 @@ def attention_decoder_fn_beam_inference(output_fn,
                 cell_output = output_fn(cell_output)    # logits
                 cell_output = nn_ops.softmax(cell_output)
                 
-                delta = 0.0
 
                 if remove_unk:
                     cell_output = array_ops.split(cell_output, [2, num_decoder_symbols-2], 1)[1]
@@ -179,59 +178,55 @@ def attention_decoder_fn_beam_inference(output_fn,
                             math_ops.equal(time, ops.convert_to_tensor(1, dtype)),
                             lambda: math_ops.log(cell_output[0]+ops.convert_to_tensor(1e-20, dtypes.float32)),
                             lambda: math_ops.log(cell_output+ops.convert_to_tensor(1e-20, dtypes.float32)) + array_ops.reshape(log_beam_probs.read(time-2), [-1, 1]))
-                    
-                    probs_sort, indices_sort = nn_ops.top_k(probs, num_decoder_symbols-2)
-                    penalty = math_ops.cast(math_ops.range(1, num_decoder_symbols-1), dtypes.float32) * delta
-                    probs = array_ops.reshape(probs_sort-penalty, [-1])
-                    indices_sort = array_ops.reshape(indices_sort, [-1])
 
-                    best_probs, indices = nn_ops.top_k(probs, beam_size * 2)
+                    if d_rate == 0.0:
+                        probs = array_ops.reshape(probs, [-1])
+                        best_probs, indices = nn_ops.top_k(probs, beam_size * 2)
+                        indices = array_ops.reshape(indices, [-1])
+                        best_probs = array_ops.reshape(best_probs, [-1])
 
-                    parents = indices // (num_decoder_symbols - 2)
-                    indices = array_ops.gather(indices_sort, indices)
+                        symbols = indices % (num_decoder_symbols - 2)
+                        symbols = symbols + 2
+                        parents = indices // (num_decoder_symbols - 2)
 
-                    symbols = indices + 2
+                    else:
+                        probs_sort, indices_sort = nn_ops.top_k(probs, num_decoder_symbols-2)
+                        penalty = math_ops.cast(math_ops.range(1, num_decoder_symbols-1), dtypes.float32) * d_rate
+                        probs = array_ops.reshape(probs_sort-penalty, [-1])
+                        indices_sort = array_ops.reshape(indices_sort, [-1])
+
+                        best_probs, indices = nn_ops.top_k(probs, beam_size * 2)
+
+                        parents = indices // (num_decoder_symbols - 2)
+                        indices = array_ops.gather(indices_sort, indices)
+                        symbols = indices + 2
                 else:
                     probs = control_flow_ops.cond(
                             math_ops.equal(time, ops.convert_to_tensor(1, dtype)),
-                            lambda: array_ops.reshape(math_ops.log(cell_output[0]+ops.convert_to_tensor(1e-20, dtypes.float32)), [-1, num_decoder_symbols]),
-                            lambda: array_ops.reshape(math_ops.log(cell_output+ops.convert_to_tensor(1e-20, dtypes.float32)) + array_ops.reshape(log_beam_probs.read(time-2), [-1, 1]), [-1, beam_size * num_decoder_symbols]))
+                            lambda: math_ops.log(cell_output[0]+ops.convert_to_tensor(1e-20, dtypes.float32)),
+                            lambda: math_ops.log(cell_output+ops.convert_to_tensor(1e-20, dtypes.float32)) + array_ops.reshape(log_beam_probs.read(time-2), [-1, 1]))
                    
-                    best_probs, indices = nn_ops.top_k(probs, beam_size * 2)
-                    indices = array_ops.reshape(indices, [-1])
-                    best_probs = array_ops.reshape(best_probs, [-1])
+                    if d_rate == 0.0:
+                        probs = array_ops.reshape(probs, [-1])
+                        best_probs, indices = nn_ops.top_k(probs, beam_size * 2)
+                        indices = array_ops.reshape(indices, [-1])
+                        best_probs = array_ops.reshape(best_probs, [-1])
 
-                    symbols = indices % num_decoder_symbols
+                        symbols = indices % num_decoder_symbols
 
-                    parents = indices // num_decoder_symbols 
-#                if remove_unk:
-#                    cell_output = array_ops.split(cell_output, [2, num_decoder_symbols-2], 1)[1]
-#                
-#                    probs = control_flow_ops.cond(
-#                            math_ops.equal(time, ops.convert_to_tensor(1, dtype)),
-#                            lambda: array_ops.reshape(math_ops.log(cell_output[0]+ops.convert_to_tensor(1e-20, dtypes.float32)), [-1, num_decoder_symbols-2]),
-#                            lambda: array_ops.reshape(math_ops.log(cell_output+ops.convert_to_tensor(1e-20, dtypes.float32)) + array_ops.reshape(log_beam_probs.read(time-2), [-1, 1]), [-1, beam_size * (num_decoder_symbols-2)]))
-#                   
-#                    best_probs, indices = nn_ops.top_k(probs, beam_size * 2)
-#                    indices = array_ops.reshape(indices, [-1])
-#                    best_probs = array_ops.reshape(best_probs, [-1])
-#
-#                    symbols = indices % (num_decoder_symbols - 2)
-#                    symbols = symbols + 2
-#                    parents = indices // (num_decoder_symbols - 2)
-#                else:
-#                    probs = control_flow_ops.cond(
-#                            math_ops.equal(time, ops.convert_to_tensor(1, dtype)),
-#                            lambda: array_ops.reshape(math_ops.log(cell_output[0]+ops.convert_to_tensor(1e-20, dtypes.float32)), [-1, num_decoder_symbols]),
-#                            lambda: array_ops.reshape(math_ops.log(cell_output+ops.convert_to_tensor(1e-20, dtypes.float32)) + array_ops.reshape(log_beam_probs.read(time-2), [-1, 1]), [-1, beam_size * num_decoder_symbols]))
-#                   
-#                    best_probs, indices = nn_ops.top_k(probs, beam_size * 2)
-#                    indices = array_ops.reshape(indices, [-1])
-#                    best_probs = array_ops.reshape(best_probs, [-1])
-#
-#                    symbols = indices % num_decoder_symbols
-#
-#                    parents = indices // num_decoder_symbols 
+                        parents = indices // num_decoder_symbols 
+                    else:
+                        probs_sort, indices_sort = nn_ops.top_k(probs, num_decoder_symbols)
+                        penalty = math_ops.cast(math_ops.range(1, num_decoder_symbols+1), dtypes.float32) * d_rate
+                        probs = array_ops.reshape(probs_sort-penalty, [-1])
+                        indices_sort = array_ops.reshape(indices_sort, [-1])
+
+                        best_probs, indices = nn_ops.top_k(probs, beam_size * 2)
+
+                        parents = indices // (num_decoder_symbols)
+                        indices = array_ops.gather(indices_sort, indices)
+                        symbols = indices
+
 
                 partition = math_ops.cast(math_ops.cast(symbols-end_of_sequence_id, dtypes.bool), dtypes.int32)
 
