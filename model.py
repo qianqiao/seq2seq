@@ -171,10 +171,11 @@ class Seq2SeqModel(object):
 
     def beam_inference(self, session, data):
         input_feed = {self.posts: data['posts'], self.posts_length: data['posts_length']}
-        output_feed = [self.symbols, self.beam_parents, self.beam_symbols, self.result_parents, self.result_symbols, self.result_probs]
-        vocab, parent, symbol, result_parent, result_symbol, result_prob = session.run(output_feed, input_feed)
+        output_feed = [self.symbols, self.beam_parents, self.beam_symbols,
+                self.result_parents, self.result_symbols, self.result_probs]
+        vocab, parent, symbol, result_parent, result_symbol, result_prob = session.run(
+                output_feed, input_feed)
         res = []
-        nounk = []
         for i, (prb, smb, prt) in enumerate(zip(result_prob, result_symbol, result_parent)):
             end = []
             for idx, j in enumerate(smb):
@@ -190,16 +191,5 @@ class Seq2SeqModel(object):
                     p = parent[step][p]
                     output.append(s)
                 output.reverse()
-                #res.append(tf.nn.embedding_lookup(self.symbols, tf.stack(output))) 
-                res.append("".join([vocab[x] for x in output]))
+                res.append(([vocab[x] for x in output], -prb[j]/len(output)))
         return res
-#                if data_utils.UNK_ID in output:
-#                    res.append([prb[j][0], " ".join([tf.compat.as_str(rev_response_vocab[int(x)]) for x in output])])
-#                else:
-#                    nounk.append([prb[j][0], " ".join([tf.compat.as_str(rev_response_vocab[int(x)]) for x in output])])
-#        res.sort(key=lambda x:x[0], reverse=True)
-#        nounk.sort(key=lambda x:x[0], reverse=True)
-#        if len(nounk) < beam_size:
-#            res = nounk + res[:(num_output-len(nounk))]
-#        else:
-#            res = nounk

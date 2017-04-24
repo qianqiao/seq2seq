@@ -1,1 +1,1 @@
-CUDA_VISIBLE_DEVICES=3 python main.py --train_dir train_traditional --is_train $1 --inference_path post.txt --inference_version $2
+CUDA_VISIBLE_DEVICES=1 python main.py --is_train False --data_dir data_weibo --train_dir train_weibo --beam_size 100 --inference_inpath post400.txt --inference_outpath response400_weibo_one.txt
