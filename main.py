@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.framework import constant_op
 import sys
 import time
 import random
@@ -14,8 +15,10 @@ except:
 tf.app.flags.DEFINE_boolean("is_train", True, "Set to False to inference.")
 tf.app.flags.DEFINE_integer("symbols", 40000, "vocabulary size.")
 tf.app.flags.DEFINE_integer("embed_units", 100, "Size of word embedding.")
-tf.app.flags.DEFINE_integer("units", 1024, "Size of each model layer.")
+tf.app.flags.DEFINE_integer("units", 512, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("layers", 4, "Number of layers in the model.")
+tf.app.flags.DEFINE_integer("beam_size", 5, "Beam size to use during beam inference.")
+tf.app.flags.DEFINE_boolean("beam_use", True, "use beam search or not.")
 tf.app.flags.DEFINE_integer("batch_size", 128, "Batch size to use during training.")
 tf.app.flags.DEFINE_string("data_dir", "./data", "Data directory")
 tf.app.flags.DEFINE_string("train_dir", "./train", "Training directory.")
@@ -112,14 +115,14 @@ def evaluate(model, sess, data_dev):
     loss /= times
     print('    perplexity on dev set: %.2f' % np.exp(loss))
 
-def inference(model, sess, posts):
+def inference(sess, posts):
     length = [len(p)+1 for p in posts]
     def padding(sent, l):
         return sent + ['_EOS'] + ['_PAD'] * (l-len(sent)-1)
     batched_posts = [padding(p, max(length)) for p in posts]
-    batched_data = {'posts': np.array(batched_posts), 
-            'posts_length': np.array(length, dtype=np.int32)}
-    responses = model.inference(sess, batched_data)[0]
+    posts = np.array(batched_posts)
+    length = np.array(length, dtype=np.int32)
+    responses = sess.run('decoder_1/generation:0', {'enc_inps:0': posts, 'enc_lens:0': length})
     results = []
     for response in responses:
         result = []
@@ -129,6 +132,56 @@ def inference(model, sess, posts):
             else:
                 break
         results.append(result)
+    return results
+
+def get_beam_responses(beam_result):
+    print beam_result
+    [parents, symbols, result_parents, result_symbols, result_probs] = beam_result
+    res = []
+    for batch, (prbs, smbs, prts) in enumerate(zip(result_probs, result_symbols, result_parents)):
+        _res = []
+        symbol = symbols[batch]
+        parent = parents[batch] - batch*FLAGS.beam_size
+        prts -= batch*FLAGS.beam_size
+        for i, (prb, smb, prt) in enumerate(zip(prbs, smbs, prts)):
+            end = []
+            for idx, j in enumerate(smb):
+                if j == '_EOS':
+                    end.append(idx)
+            if len(end) == 0: continue
+            for j in end:
+                p = prt[j]
+                s = -1
+                output = []
+                for step in xrange(i-1, -1, -1):
+                    s = symbol[step][p]
+                    p = parent[step][p]
+                    output.append(s)
+                output.reverse()
+                res.append([-prb[j]/(len(output)), " ".join(output)])
+    print res
+    return res
+
+def beam_inference(sess, posts):
+    length = [len(p)+1 for p in posts]
+    def padding(sent, l):
+        return sent + ['_EOS'] + ['_PAD'] * (l-len(sent)-1)
+    batched_posts = [padding(p, max(length)) for p in posts]
+    posts = np.array(batched_posts)
+    length = np.array(length, dtype=np.int32)
+    beam_result = sess.run(['decoder_2/beam_parents:0', 'decoder_2/beam_symbols:0',
+        'decoder_2/result_parents:0', 'decoder_2/result_symbols:0', 'decoder_2/result_probs:0'],
+        {'enc_inps:0': posts, 'enc_lens:0': length})
+    responses = get_beam_responses(beam_result)
+    results = []
+    for prb, response in responses:
+        result = []
+        for token in response:
+            if token != '_EOS':
+                result.append(token)
+            else:
+                break
+        results.append([prb, result])
     return results
 
 config = tf.ConfigProto()
@@ -144,25 +197,29 @@ with tf.Session(config=config) as sess:
                 FLAGS.embed_units,
                 FLAGS.units, 
                 FLAGS.layers,
-                is_train=True,
-                vocab=vocab,
-                embed=embed)
+                FLAGS.beam_size,
+                embed)
         if FLAGS.log_parameters:
             model.print_parameters()
         
         if tf.train.get_checkpoint_state(FLAGS.train_dir):
             print("Reading model parameters from %s" % FLAGS.train_dir)
             model.saver.restore(sess, tf.train.latest_checkpoint(FLAGS.train_dir))
-            model.symbol2index.init.run()
         else:
             print("Created model with fresh parameters.")
             tf.global_variables_initializer().run()
-            model.symbol2index.init.run()
-        
+            op_in = model.symbol2index.insert(constant_op.constant(vocab),
+                constant_op.constant(range(FLAGS.symbols), dtype=tf.int64))
+            sess.run(op_in)
+            op_out = model.index2symbol.insert(constant_op.constant(
+                range(FLAGS.symbols), dtype=tf.int64), constant_op.constant(vocab))
+            sess.run(op_out)
+
         loss_step, time_step = np.zeros((1, )), .0
         previous_losses = [1e18]*3
         while True:
             if model.global_step.eval() % FLAGS.per_checkpoint == 0:
+                model.model_exporter.export('tsinghua', model.global_step, sess)
                 show = lambda a: '[%s]' % (' '.join(['%.2f' % x for x in a]))
                 print("global step %d learning rate %.4f step-time %.2f perplexity %s"
                         % (model.global_step.eval(), model.learning_rate.eval(), 
@@ -180,38 +237,43 @@ with tf.Session(config=config) as sess:
             time_step += (time.time() - start_time) / FLAGS.per_checkpoint
             
     else:
-        model = Seq2SeqModel(
-                FLAGS.symbols, 
-                FLAGS.embed_units, 
-                FLAGS.units, 
-                FLAGS.layers, 
-                is_train=False,
-                vocab=None)
+        saver = tf.train.import_meta_graph('train/checkpoint-00000000.meta')
         if FLAGS.inference_version == 0:
             model_path = tf.train.latest_checkpoint(FLAGS.train_dir)
         else:
             model_path = '%s/checkpoint-%08d' % (FLAGS.train_dir, FLAGS.inference_version)
         print('restore from %s' % model_path)
-        model.saver.restore(sess, model_path)
-        model.symbol2index.init.run()
-
+        saver.restore(sess, model_path)
+        
         def split(sent):
             if Global == None:
                 return sent.split()
-
             sent = sent.decode('utf-8', 'ignore').encode('gbk', 'ignore')
             tuples = [(word.decode("gbk").encode("utf-8"), pos) 
                     for word, pos in Global.GetTokenPos(sent)]
             return [each[0] for each in tuples]
         
         if FLAGS.inference_path == '':
-            while True:
-                sys.stdout.write('post: ')
-                sys.stdout.flush()
-                post = split(sys.stdin.readline())
-                response = inference(model, sess, [post])[0]
-                print('response: %s' % ''.join(response))
-                sys.stdout.flush()
+            if not FLAGS.beam_use:
+                while True:
+                    sys.stdout.write('post: ')
+                    sys.stdout.flush()
+                    post = split(sys.stdin.readline())
+                    response = inference(sess, [post])[0] 
+                    print('response: %s' % ''.join(response))
+                    sys.stdout.flush()
+            else:
+                while True:
+                    posts = []
+                    for i in range(3):
+                        sys.stdout.write('post%d: ' % i)
+                        sys.stdout.flush()
+                        post = split(sys.stdin.readline())
+                        posts.append(post)
+                    responses = beam_inference(sess, posts)
+                    for prb, response in responses:
+                        print('%f, response: %s--END--' % (prb, ''.join(response)))
+                    sys.stdout.flush()
         else:
             posts = []
             with open(FLAGS.inference_path) as f:
@@ -222,7 +284,7 @@ with tf.Session(config=config) as sess:
             responses = []
             st, ed = 0, FLAGS.batch_size
             while st < len(posts):
-                responses += inference(model, sess, posts[st: ed])
+                responses += inference(sess, posts[st: ed])
                 st, ed = ed, ed+FLAGS.batch_size
 
             with open(FLAGS.inference_path+'.out', 'w') as f:

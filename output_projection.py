@@ -7,7 +7,7 @@ def output_projection_layer(num_units, num_symbols, num_samples=None, name="outp
         return layers.linear(outputs, num_symbols, scope=name)
 
     def sampled_sequence_loss(outputs, targets, masks):
-        with variable_scope.variable_scope('decoder/%s' % name):
+        with variable_scope.variable_scope('decoder_rnn/%s' % name):
             weights = tf.transpose(tf.get_variable("weights", [num_units, num_symbols]))
             bias = tf.get_variable("biases", [num_symbols])
             
