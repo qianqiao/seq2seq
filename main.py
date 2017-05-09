@@ -135,7 +135,6 @@ def inference(sess, posts):
     return results
 
 def get_beam_responses(beam_result):
-    print beam_result
     [parents, symbols, result_parents, result_symbols, result_probs] = beam_result
     res = []
     for batch, (prbs, smbs, prts) in enumerate(zip(result_probs, result_symbols, result_parents)):
@@ -159,7 +158,6 @@ def get_beam_responses(beam_result):
                     output.append(s)
                 output.reverse()
                 res.append([-prb[j]/(len(output)), " ".join(output)])
-    print res
     return res
 
 def beam_inference(sess, posts):
@@ -219,7 +217,7 @@ with tf.Session(config=config) as sess:
         previous_losses = [1e18]*3
         while True:
             if model.global_step.eval() % FLAGS.per_checkpoint == 0:
-                model.model_exporter.export('tsinghua', model.global_step, sess)
+                #model.model_exporter.export('tsinghua', model.global_step, sess)
                 show = lambda a: '[%s]' % (' '.join(['%.2f' % x for x in a]))
                 print("global step %d learning rate %.4f step-time %.2f perplexity %s"
                         % (model.global_step.eval(), model.learning_rate.eval(), 
