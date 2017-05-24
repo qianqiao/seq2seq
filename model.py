@@ -68,8 +68,7 @@ class Seq2SeqModel(object):
         batch_size, decoder_len = tf.shape(self.responses)[0], tf.shape(self.responses)[1]
         self.responses_input = tf.concat([tf.ones([batch_size, 1], dtype=tf.int64)*GO_ID,
             tf.split(self.responses_target, [decoder_len-1, 1], 1)[0]], 1)   # batch*len
-        self.decoder_mask = tf.reshape(tf.cumsum(tf.one_hot(self.responses_length-1, 
-            decoder_len), reverse=True, axis=1), [-1, decoder_len])
+        self.decoder_mask = tf.sequence_mask(self.responses_length, maxlen=decoder_len)
         
         # build the embedding table (index to vector)
         if embed is None:
